@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  otp:
+    image: opentripplanner/opentripplanner:2.6.0
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./otp:/var/opentripplanner
+    command: ["--load", "--serve"]
+    mem_limit: 4g
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  backend:
+    build: ./backend
+    ports:
+      - "3000:3000"
+    environment:
+      OTP_URL: http://otp:8080
+    depends_on:
+      otp:
+        condition: service_healthy
+    restart: on-failure

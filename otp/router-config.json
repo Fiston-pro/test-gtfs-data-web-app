@@ -1,0 +1,7 @@
+{
+  "routingDefaults": {
+    "walkSpeed": 1.4,
+    "transferSlack": 120,
+    "waitAtBeginningFactor": 0.4
+  }
+}

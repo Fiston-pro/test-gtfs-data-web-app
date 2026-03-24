@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Krakow Transit Router</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      background: #f4f6f8;
+      color: #1a1a2e;
+    }
+
+    header {
+      background: #1565C0;
+      color: white;
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      z-index: 10;
+    }
+    header .logo { font-size: 26px; }
+    header h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.3px; }
+    header .subtitle {
+      margin-left: auto;
+      font-size: 12px;
+      opacity: 0.75;
+      background: rgba(255,255,255,0.15);
+      padding: 4px 10px;
+      border-radius: 20px;
+    }
+
+    .app { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 380px;
+      min-width: 320px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      background: white;
+      box-shadow: 2px 0 8px rgba(0,0,0,0.08);
+      z-index: 5;
+    }
+
+    .form-panel {
+      padding: 20px;
+      border-bottom: 1px solid #e8ecf0;
+      background: #f9fbff;
+    }
+
+    .field { margin-bottom: 14px; }
+    .field label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      color: #5a6a85;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+    }
+    .coords-row { display: flex; gap: 8px; }
+    .coords-row input { flex: 1; }
+
+    input[type="number"] {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1.5px solid #dde3ed;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #1a1a2e;
+      background: white;
+      transition: border-color 0.2s;
+      -moz-appearance: textfield;
+    }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
+    input[type="number"]:focus { outline: none; border-color: #1565C0; }
+
+    .map-tip {
+      font-size: 11px;
+      color: #8a96a8;
+      margin-bottom: 14px;
+      padding: 6px 10px;
+      background: #eef2ff;
+      border-radius: 6px;
+      border-left: 3px solid #1565C0;
+    }
+
+    .search-btn {
+      width: 100%;
+      padding: 11px;
+      background: #1565C0;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      letter-spacing: 0.3px;
+    }
+    .search-btn:hover { background: #0d47a1; }
+    .search-btn:active { transform: scale(0.98); }
+    .search-btn:disabled { background: #90bae8; cursor: not-allowed; transform: none; }
+
+    /* ── Results ── */
+    .results {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    .results-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #8a96a8;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      margin-bottom: 12px;
+    }
+    .placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #aab4c4;
+      gap: 8px;
+      padding: 24px;
+      text-align: center;
+    }
+    .placeholder .icon { font-size: 40px; }
+    .placeholder p { font-size: 13px; line-height: 1.5; }
+
+    /* ── Itinerary cards ── */
+    .itin-card {
+      border: 1.5px solid #e8ecf0;
+      border-radius: 10px;
+      margin-bottom: 10px;
+      overflow: hidden;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      cursor: pointer;
+    }
+    .itin-card:hover { border-color: #90bae8; box-shadow: 0 2px 8px rgba(21,101,192,0.1); }
+    .itin-card.active { border-color: #1565C0; box-shadow: 0 2px 12px rgba(21,101,192,0.15); }
+
+    .itin-header {
+      padding: 12px 14px;
+      background: #f5f8ff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .itin-card.active .itin-header { background: #e8f0fe; }
+
+    .itin-modes { display: flex; align-items: center; gap: 4px; font-size: 18px; flex-wrap: wrap; }
+    .itin-modes .arrow { font-size: 12px; color: #aab4c4; }
+
+    .itin-meta { font-size: 11px; color: #6b7a99; margin-top: 4px; }
+    .itin-duration { font-size: 20px; font-weight: 700; color: #1565C0; white-space: nowrap; }
+
+    /* ── Legs ── */
+    .legs { border-top: 1px solid #eef2f7; }
+
+    .leg {
+      display: flex;
+      align-items: flex-start;
+      padding: 10px 14px;
+      gap: 10px;
+      border-bottom: 1px solid #f0f4f8;
+    }
+    .leg:last-child { border-bottom: none; }
+
+    .leg-icon {
+      font-size: 18px;
+      min-width: 28px;
+      text-align: center;
+      padding-top: 1px;
+    }
+
+    .leg-line-badge {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #1565C0;
+      color: white;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    .leg-body { flex: 1; min-width: 0; }
+    .leg-main { font-size: 13px; font-weight: 500; color: #1a1a2e; }
+    .leg-detail { font-size: 11px; color: #8a96a8; margin-top: 3px; line-height: 1.4; }
+    .leg-stops { font-size: 11px; color: #aab4c4; margin-top: 3px; font-style: italic; }
+
+    .leg-times {
+      text-align: right;
+      min-width: 72px;
+      font-size: 11px;
+      color: #6b7a99;
+      line-height: 1.6;
+    }
+
+    /* ── Error ── */
+    .error-box {
+      background: #fef2f2;
+      border: 1.5px solid #fca5a5;
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: #991b1b;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ── Map ── */
+    .map-container { flex: 1; position: relative; }
+    #map { width: 100%; height: 100%; }
+
+    /* Leaflet custom markers */
+    .custom-marker {
+      width: 28px;
+      height: 28px;
+      border-radius: 50% 50% 50% 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 700;
+      color: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+      transform: rotate(-45deg);
+    }
+    .custom-marker span { transform: rotate(45deg); }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">🚌</span>
+  <h1>Krakow Transit Router</h1>
+  <span class="subtitle">OpenTripPlanner + GTFS</span>
+</header>
+
+<div class="app">
+  <!-- ── Sidebar ── -->
+  <div class="sidebar">
+    <div class="form-panel">
+      <div class="map-tip">💡 Click map twice: first click = origin (A), second = destination (B)</div>
+
+      <div class="field">
+        <label>📍 Origin</label>
+        <div class="coords-row">
+          <input type="number" id="fromLat" placeholder="Latitude"  value="50.0673" step="0.00001" />
+          <input type="number" id="fromLon" placeholder="Longitude" value="19.9477" step="0.00001" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>🎯 Destination</label>
+        <div class="coords-row">
+          <input type="number" id="toLat" placeholder="Latitude"  value="50.0694" step="0.00001" />
+          <input type="number" id="toLon" placeholder="Longitude" value="20.0419" step="0.00001" />
+        </div>
+      </div>
+
+      <div class="field">
+        <label>📅 Date &amp; Time <span style="font-weight:400;color:#aab4c4">(GTFS valid: Mon–Wed or Sun, up to 2026-03-22)</span></label>
+        <div class="coords-row">
+          <input type="date"  id="depDate" value="2026-03-18" style="flex:1.5" />
+          <input type="time"  id="depTime" value="08:00" />
+        </div>
+      </div>
+
+      <button class="search-btn" id="routeBtn" onclick="getRoute()">Find Route</button>
+    </div>
+
+    <div class="results" id="results">
+      <div class="placeholder">
+        <span class="icon">🗺️</span>
+        <p>Enter coordinates or click the map to set your origin and destination, then click <strong>Find Route</strong>.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Map ── -->
+  <div class="map-container">
+    <div id="map"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const BACKEND = 'http://localhost:3000';
+const KRAKOW  = [50.0647, 19.9450];
+
+// ── Mode meta ────────────────────────────────────────────────────────────────
+const MODE = {
+  WALK:    { icon: '🚶', color: '#9E9E9E', label: 'Walk'   },
+  BUS:     { icon: '🚌', color: '#1565C0', label: 'Bus'    },
+  TRAM:    { icon: '🚃', color: '#C62828', label: 'Tram'   },
+  RAIL:    { icon: '🚆', color: '#2E7D32', label: 'Train'  },
+  SUBWAY:  { icon: '🚇', color: '#6A1B9A', label: 'Metro'  },
+  FERRY:   { icon: '⛴️', color: '#0277BD', label: 'Ferry'  },
+  BICYCLE: { icon: '🚲', color: '#F57F17', label: 'Bike'   },
+};
+const modeOf = (m) => MODE[m] || { icon: '🚏', color: '#607D8B', label: m };
+
+// ── Polyline decoder (Google encoded format) ─────────────────────────────────
+function decodePolyline(encoded) {
+  const out = [];
+  let i = 0, lat = 0, lng = 0;
+  while (i < encoded.length) {
+    let b, shift = 0, result = 0;
+    do { b = encoded.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lat += (result & 1) ? ~(result >> 1) : (result >> 1);
+    shift = result = 0;
+    do { b = encoded.charCodeAt(i++) - 63; result |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+    lng += (result & 1) ? ~(result >> 1) : (result >> 1);
+    out.push([lat / 1e5, lng / 1e5]);
+  }
+  return out;
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function fmtDur(min) {
+  if (min < 1) return '<1 min';
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)}h ${min % 60}m`;
+}
+function fmtDist(m) {
+  return m == null ? '' : m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+// ── Map setup ────────────────────────────────────────────────────────────────
+const map = L.map('map').setView(KRAKOW, 13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© <a href="https://openstreetmap.org">OpenStreetMap</a>',
+  maxZoom: 19,
+}).addTo(map);
+
+function makeMarkerIcon(letter, bg) {
+  return L.divIcon({
+    className: '',
+    iconSize: [28, 36],
+    iconAnchor: [14, 36],
+    html: `<div style="
+      width:28px;height:28px;
+      background:${bg};color:white;
+      border-radius:50% 50% 50% 0;transform:rotate(-45deg);
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 2px 6px rgba(0,0,0,0.35);
+      font-weight:700;font-size:13px;
+    "><span style="transform:rotate(45deg)">${letter}</span></div>`,
+  });
+}
+
+let fromMarker = null, toMarker = null;
+let clickStep = 0; // 0 = waiting for origin, 1 = waiting for destination
+let routeLayers = [];
+
+map.on('click', (e) => {
+  const { lat, lng } = e.latlng;
+  if (clickStep === 0) {
+    document.getElementById('fromLat').value = lat.toFixed(6);
+    document.getElementById('fromLon').value = lng.toFixed(6);
+    if (fromMarker) map.removeLayer(fromMarker);
+    fromMarker = L.marker([lat, lng], { icon: makeMarkerIcon('A', '#1565C0') })
+      .addTo(map).bindPopup('<b>Origin</b>').openPopup();
+    clickStep = 1;
+  } else {
+    document.getElementById('toLat').value  = lat.toFixed(6);
+    document.getElementById('toLon').value  = lng.toFixed(6);
+    if (toMarker) map.removeLayer(toMarker);
+    toMarker = L.marker([lat, lng], { icon: makeMarkerIcon('B', '#C62828') })
+      .addTo(map).bindPopup('<b>Destination</b>').openPopup();
+    clickStep = 0;
+  }
+});
+
+// ── Route on map ─────────────────────────────────────────────────────────────
+function clearRouteMap() {
+  routeLayers.forEach((l) => map.removeLayer(l));
+  routeLayers = [];
+}
+
+function showItinOnMap(itin) {
+  clearRouteMap();
+  const allCoords = [];
+
+  itin.legs.forEach((leg) => {
+    if (!leg.geometry) return;
+    const coords = decodePolyline(leg.geometry);
+    if (!coords.length) return;
+    allCoords.push(...coords);
+
+    const color  = leg.color || modeOf(leg.mode).color;
+    const weight = leg.isTransit ? 5 : 3;
+    const dash   = leg.mode === 'WALK' ? '6, 8' : null;
+
+    const line = L.polyline(coords, { color, weight, opacity: 0.85, dashArray: dash })
+      .addTo(map)
+      .bindPopup(`<b>${modeOf(leg.mode).icon} ${modeOf(leg.mode).label}</b>${leg.line ? ' · Line ' + leg.line : ''}<br>${leg.from} → ${leg.to}`);
+    routeLayers.push(line);
+  });
+
+  if (allCoords.length) {
+    map.fitBounds(L.latLngBounds(allCoords), { padding: [40, 40] });
+  }
+}
+
+// ── Render results ───────────────────────────────────────────────────────────
+let currentItins = [];
+
+function selectItinerary(idx) {
+  document.querySelectorAll('.itin-card').forEach((el) => el.classList.remove('active'));
+  const el = document.getElementById(`itin-${idx}`);
+  if (el) el.classList.add('active');
+  showItinOnMap(currentItins[idx]);
+}
+
+function renderLeg(leg) {
+  const m = modeOf(leg.mode);
+  const lineBadge = leg.line
+    ? `<span class="leg-line-badge" style="background:${leg.color || m.color}">${leg.line}</span>`
+    : '';
+  const stopsText = leg.stops && leg.stops.length
+    ? `<div class="leg-stops">via ${leg.stops.slice(0, 3).join(', ')}${leg.stops.length > 3 ? ` +${leg.stops.length - 3} more` : ''}</div>`
+    : '';
+
+  return `
+    <div class="leg">
+      <div class="leg-icon">${m.icon}</div>
+      <div class="leg-body">
+        <div class="leg-main">
+          ${leg.isTransit ? `${m.label}${lineBadge}` : m.label}
+        </div>
+        <div class="leg-detail">
+          ${leg.from} → ${leg.to}
+          ${leg.distance != null ? ' · ' + fmtDist(leg.distance) : ''}
+        </div>
+        ${stopsText}
+      </div>
+      <div class="leg-times">
+        <div>${leg.startTime}</div>
+        <div>${leg.endTime}</div>
+        <div style="color:#aab4c4">${fmtDur(leg.duration)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderItinerary(itin, idx) {
+  const modeIcons = itin.legs.map((l) => modeOf(l.mode).icon).join(
+    '<span class="arrow">›</span>'
+  );
+  const lines = itin.legs.filter((l) => l.isTransit && l.line).map((l) => l.line).join(', ');
+  const firstDep = itin.legs[0]?.startTime || '';
+  const lastArr  = itin.legs[itin.legs.length - 1]?.endTime || '';
+
+  return `
+    <div class="itin-card${idx === 0 ? ' active' : ''}" id="itin-${idx}" onclick="selectItinerary(${idx})">
+      <div class="itin-header">
+        <div>
+          <div class="itin-modes">${modeIcons}</div>
+          <div class="itin-meta">
+            ${firstDep} – ${lastArr}
+            ${lines ? ' · Lines: ' + lines : ''}
+            · ${itin.transfers} transfer${itin.transfers !== 1 ? 's' : ''}
+            · Walk ${fmtDur(itin.walkTime)} · Wait ${fmtDur(itin.waitingTime)}
+          </div>
+        </div>
+        <div class="itin-duration">${fmtDur(itin.duration)}</div>
+      </div>
+      <div class="legs">${itin.legs.map((l) => renderLeg(l)).join('')}</div>
+    </div>
+  `;
+}
+
+function setResults(html) {
+  document.getElementById('results').innerHTML = html;
+}
+
+// ── Main fetch ───────────────────────────────────────────────────────────────
+async function getRoute() {
+  const fromLat = parseFloat(document.getElementById('fromLat').value);
+  const fromLon = parseFloat(document.getElementById('fromLon').value);
+  const toLat   = parseFloat(document.getElementById('toLat').value);
+  const toLon   = parseFloat(document.getElementById('toLon').value);
+
+  if (isNaN(fromLat) || isNaN(fromLon) || isNaN(toLat) || isNaN(toLon)) {
+    setResults(`<div class="error-box">Please fill in all four coordinates.</div>`);
+    return;
+  }
+
+  const btn = document.getElementById('routeBtn');
+  btn.disabled = true;
+  btn.textContent = 'Searching…';
+  setResults(`<div class="placeholder"><span class="icon">🔍</span><p>Querying OpenTripPlanner…</p></div>`);
+  clearRouteMap();
+
+  // Place markers on map from inputs (in case user typed, not clicked map)
+  if (fromMarker) map.removeLayer(fromMarker);
+  if (toMarker)   map.removeLayer(toMarker);
+  fromMarker = L.marker([fromLat, fromLon], { icon: makeMarkerIcon('A', '#1565C0') }).addTo(map).bindPopup('<b>Origin</b>');
+  toMarker   = L.marker([toLat,   toLon],   { icon: makeMarkerIcon('B', '#C62828') }).addTo(map).bindPopup('<b>Destination</b>');
+
+  try {
+    const date = document.getElementById('depDate').value;
+    const time = document.getElementById('depTime').value + ':00';
+    const url = `${BACKEND}/route?fromLat=${fromLat}&fromLon=${fromLon}&toLat=${toLat}&toLon=${toLon}&date=${date}&time=${time}`;
+    const res  = await fetch(url);
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    currentItins = data.itineraries;
+
+    if (!currentItins.length) {
+      setResults(`<div class="error-box">No routes found. Check that OTP has loaded your GTFS data and that the coordinates are within the network.</div>`);
+      return;
+    }
+
+    const html = `
+      <div class="results-title">${currentItins.length} route${currentItins.length !== 1 ? 's' : ''} found</div>
+      ${currentItins.map((itin, i) => renderItinerary(itin, i)).join('')}
+    `;
+    setResults(html);
+    showItinOnMap(currentItins[0]);
+
+  } catch (err) {
+    setResults(`<div class="error-box">❌ <strong>Error:</strong> ${err.message}<br><br>Make sure the backend is running on port 3000 and OTP has finished loading.</div>`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Find Route';
+  }
+}
+
+// Allow Enter key to trigger search
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') getRoute();
+});
+</script>
+</body>
+</html>

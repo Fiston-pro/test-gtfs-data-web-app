@@ -1,0 +1,15 @@
+# OTP large binary files — do NOT commit these
+otp/*.osm.pbf
+otp/*.pbf
+otp/*.gtfs.zip
+otp/graph.obj
+otp/streetGraph.obj
+*.osm.pbf
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
