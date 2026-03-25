@@ -1,9 +1,18 @@
 # GTFS Transit Router
 
-A minimal local transit routing app powered by **OpenTripPlanner** and real **GTFS data**.
-Give it two coordinates → get back a full journey: walking legs, bus/tram lines, transfers, stop names, and duration.
+A local transit routing app powered by **OpenTripPlanner** and real **GTFS data**.
+Give it two coordinates → get back a full journey plan: walking legs, bus/tram lines, transfers, stop names, and duration.
 
-Think of it as a local, offline Jakdojade that runs entirely from a GTFS zip file.
+Think of it as a local, offline **Jakdojade** that runs entirely from a GTFS zip file — no Google Maps, no external APIs.
+
+---
+
+## What you'll see when it's running
+
+- A map with your route drawn on it (walking = gray dashed, bus/tram = colored line)
+- Up to 3 route options, ranked by total travel time
+- Each option broken into legs: 🚶 Walk → 🚌 Bus 174 → 🚃 Tram 1 → 🚶 Walk
+- Departure times, stop names, line numbers, transfer count, and total duration
 
 ---
 
@@ -13,132 +22,197 @@ Think of it as a local, offline Jakdojade that runs entirely from a GTFS zip fil
 You (browser)
     │  lat/lon coords
     ▼
-Node.js backend  ──GraphQL──▶  OpenTripPlanner (Java, Docker)
-    │                               │
-    │                         ┌─────┴──────┐
-    │                      GTFS zip    OSM .pbf
-    │                    (bus routes)  (streets)
-    │
-    ▼
-Step-by-step itinerary with map
+Node.js backend  ──GraphQL──▶  OpenTripPlanner (Java, in Docker)
+                                       │
+                               ┌───────┴────────┐
+                           GTFS .zip         OSM .pbf
+                         (bus/tram routes)  (streets + footpaths)
 ```
 
-OTP builds a graph from your GTFS + OSM data, then runs the **RAPTOR** routing algorithm to find the fastest combinations of walking + transit legs.
+OTP builds a routing graph from your GTFS + OSM files, then uses the **RAPTOR** algorithm to find the fastest combinations of walking + transit — exactly how apps like Jakdojade work under the hood.
 
 ---
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) — **allocate at least 4 GB RAM** in Docker settings
-- A GTFS zip file for your city (see below)
+Before you start, make sure you have:
+
+- [ ] **Docker Desktop** installed and running — [download here](https://www.docker.com/products/docker-desktop/)
+- [ ] **Docker has at least 4 GB RAM** allocated (see [Docker memory](#docker-memory) if unsure)
+- [ ] A **GTFS zip file** for your city (see Step 1)
+- [ ] ~5 GB free disk space
+
+That's it. No Java, no Node.js, no npm needed on your machine.
 
 ---
 
 ## Step 1 — Get your data files
 
-### GTFS (transit schedules)
+You need two files. Both go in the `otp/` folder.
 
-You need a `gtfs.zip` for your city. Common sources:
+### 1a. GTFS file (transit schedules)
 
-| City | Source |
-|------|--------|
-| Kraków | [gtfs.ztp.krakow.pl](https://gtfs.ztp.krakow.pl) |
-| Warsaw | [mkuran.pl/gtfs](https://mkuran.pl/gtfs/) |
-| Any city | [transit.land](https://www.transit.land/feeds) or the city's open data portal |
+This contains all the bus/tram routes, stops, and timetables for your city.
 
-Rename the file to anything you like and place it in the `otp/` folder:
+| City | Download |
+|------|----------|
+| **Kraków** | https://gtfs.ztp.krakow.pl |
+| Warsaw | https://mkuran.pl/gtfs/ |
+| Any city | https://www.transit.land/feeds — search your city |
+
+Download it and place it in the `otp/` folder. Name it anything ending in `.gtfs.zip`:
+
 ```
-otp/mycity.gtfs.zip
+otp/krakow.gtfs.zip
 ```
 
-### OSM street data (for walking legs)
+### 1b. OSM file (street map for walking legs)
 
-Download the `.osm.pbf` for your region from [Geofabrik](https://download.geofabrik.de/europe/poland.html).
+Download the `.osm.pbf` for your region from [Geofabrik](https://download.geofabrik.de).
 
-For Kraków, the Małopolskie region works — but it's 185 MB and needs 4+ GB RAM to build.
-A faster option is to crop it to just the city bounding box first (see [Tip: crop OSM](#tip-crop-osm-to-city-bounding-box) below).
+For Kraków → go to Europe → Poland → [Małopolskie](https://download.geofabrik.de/europe/poland/malopolskie-latest.osm.pbf)
 
-Place the file in `otp/`:
+> ⚠️ The full region file is ~185 MB and needs 6+ GB RAM to build.
+> **We strongly recommend cropping it to just your city first** (Step 2 below — takes 30 seconds).
+
+Place the downloaded file in `otp/`:
+
 ```
-otp/mycity.osm.pbf
+otp/malopolskie-latest.osm.pbf
 ```
 
 ---
 
-## Step 2 — Build the OTP graph (one-time, ~5–15 min)
+## Step 2 — Crop OSM to your city (recommended)
 
-This reads your GTFS + OSM and produces a `graph.obj` routing graph.
+This reduces the OSM file from ~185 MB to ~33 MB and cuts build RAM usage in half.
+Skip this if you have 6+ GB allocated to Docker.
+
+**Kraków bounding box:**
 
 ```bash
+# Mac / Linux
+docker run --rm \
+  -v "$(pwd)/otp:/data" \
+  iboates/osmium \
+  extract --bbox 19.79,49.97,20.12,50.13 \
+  /data/malopolskie-latest.osm.pbf \
+  -o /data/krakow.osm.pbf \
+  --overwrite
+```
+
+```powershell
+# Windows (PowerShell)
+docker run --rm `
+  -v "${PWD}/otp:/data" `
+  iboates/osmium `
+  extract --bbox 19.79,49.97,20.12,50.13 `
+  /data/malopolskie-latest.osm.pbf `
+  -o /data/krakow.osm.pbf `
+  --overwrite
+```
+
+When it finishes, you'll have `otp/krakow.osm.pbf` (~33 MB). You can delete the original big file.
+
+**For other cities** — find your bounding box at [bboxfinder.com](http://bboxfinder.com) (draw a box around your city, copy the coordinates).
+
+---
+
+## Step 3 — Build the routing graph (one-time, ~5–10 min)
+
+This reads your GTFS + OSM files and produces `otp/graph.obj` — the routing graph OTP uses for all queries.
+
+**You only need to do this once.** After that, OTP just loads the graph on startup.
+
+```bash
+# Mac / Linux
 docker run --rm \
   -v "$(pwd)/otp:/var/opentripplanner" \
   opentripplanner/opentripplanner:2.6.0 \
   --build --save
 ```
 
-> **Windows (Git Bash / PowerShell):** replace `$(pwd)` with the full path, e.g.
-> `-v "C:/Users/you/gtfs-web-app/otp:/var/opentripplanner"`
+```powershell
+# Windows (PowerShell)
+docker run --rm `
+  -v "${PWD}/otp:/var/opentripplanner" `
+  opentripplanner/opentripplanner:2.6.0 `
+  --build --save
+```
 
-You should see `Graph saved` at the end. The file `otp/graph.obj` will appear.
+```bash
+# Windows (Git Bash) — use full path
+docker run --rm \
+  -v "C:/Users/YOU/gtfs-web-app/otp:/var/opentripplanner" \
+  opentripplanner/opentripplanner:2.6.0 \
+  --build --save
+```
+
+**How to know it worked:** You'll see `Graph saved` near the end of the logs, and a new file `otp/graph.obj` will appear in the folder.
+
+> If you see `OutOfMemoryError` → see [Docker memory](#docker-memory) below.
 
 ---
 
-## Step 3 — Start everything
+## Step 4 — Start the app
 
 ```bash
 docker-compose up
 ```
 
-This starts:
-- **OTP** on `http://localhost:8080` — loads the graph and serves routing queries
-- **Node.js backend** on `http://localhost:3000` — translates your requests to OTP GraphQL
+This starts two containers:
 
-Wait ~30–60 seconds for OTP to finish loading, then open the frontend.
+| Container | URL | What it does |
+|-----------|-----|--------------|
+| OTP | `localhost:8080` | Loads `graph.obj`, handles routing queries |
+| Backend | `localhost:3000` | Express API, translates requests to OTP GraphQL |
+
+**How to know it's ready:** Wait until you see this line in the logs:
+```
+otp-1  | ... Grizzly server running.
+```
+Takes about 30–60 seconds after `docker-compose up`.
 
 ---
 
-## Step 4 — Open the frontend
+## Step 5 — Open the frontend
 
-Just open the file directly in your browser:
+Open this file directly in your browser — no server needed:
 
 ```
 frontend/index.html
 ```
 
-Or serve it with any static server:
-```bash
-npx serve frontend
-```
+On Windows you can double-click it, or drag it into Chrome/Firefox.
 
 ---
 
 ## Using the app
 
-1. Enter **From** coordinates (lat, lon) — or click on the map (first click = origin)
-2. Enter **To** coordinates — or click on the map (second click = destination)
-3. Click **Find Route**
+1. **Click on the map** to set your start point (first click = origin 🔵, second click = destination 🔴)
+   — or type coordinates manually in the form
+2. Click **Find Route**
+3. Results appear as cards on the left, route drawn on the map on the right
 
-You'll get up to 3 itineraries, each broken down into legs:
-
-| Icon | Leg type |
-|------|----------|
-| 🚶 | Walk |
-| 🚌 | Bus |
-| 🚃 | Tram |
-| 🚆 | Rail |
-| 🚇 | Metro/Subway |
-
-Each leg shows: line number, departure time, stop names, and duration.
-The map draws each leg as a colored polyline.
-
-### Example coordinates (Kraków)
+### Test coordinates for Kraków
 
 | Place | Lat | Lon |
 |-------|-----|-----|
-| Main Station | 50.0673 | 19.9477 |
+| Main Train Station | 50.0673 | 19.9477 |
 | Wawel Castle | 50.0543 | 19.9355 |
 | Nowa Huta | 50.0694 | 20.0419 |
 | AGH University | 50.0661 | 19.9236 |
+| Galeria Krakowska | 50.0647 | 19.9468 |
+
+Try: **Main Station → Nowa Huta** for a route with a bus and a tram leg.
+
+---
+
+## Stopping the app
+
+```bash
+docker-compose down
+```
 
 ---
 
@@ -146,32 +220,33 @@ The map draws each leg as a colored polyline.
 
 ```
 gtfs-web-app/
-├── docker-compose.yml       # Runs OTP + backend together
+├── docker-compose.yml        # Starts OTP + backend
 ├── otp/
-│   ├── build-config.json    # OTP build settings
-│   ├── router-config.json   # OTP routing defaults (walk speed, transfer slack)
-│   ├── mycity.gtfs.zip      # ← you add this (gitignored)
-│   ├── mycity.osm.pbf       # ← you add this (gitignored)
-│   └── graph.obj            # ← generated by build step (gitignored)
+│   ├── build-config.json     # OTP build settings
+│   ├── router-config.json    # Walk speed, transfer slack, etc.
+│   ├── yourcity.gtfs.zip     # ← YOU add this (gitignored)
+│   ├── yourcity.osm.pbf      # ← YOU add this (gitignored)
+│   └── graph.obj             # ← generated by Step 3 (gitignored)
 ├── backend/
-│   ├── index.js             # Express server, /route endpoint, OTP GraphQL client
+│   ├── index.js              # Express server — /route endpoint, OTP GraphQL queries
 │   ├── package.json
 │   └── Dockerfile
 └── frontend/
-    └── index.html           # Map + form UI (Leaflet, no build step)
+    └── index.html            # Map UI — Leaflet.js, no build step needed
 ```
 
 ---
 
-## API
+## API reference
 
 The backend exposes one endpoint:
 
 ```
-GET /route?fromLat=&fromLon=&toLat=&toLon=
+GET http://localhost:3000/route?fromLat=50.0673&fromLon=19.9477&toLat=50.0694&toLon=20.0419
 ```
 
-Response:
+Example response:
+
 ```json
 {
   "itineraries": [
@@ -184,7 +259,7 @@ Response:
         {
           "mode": "WALK",
           "from": "Origin",
-          "to": "Dworzec Główny",
+          "to": "Dworzec Główny Wschód",
           "startTime": "08:04",
           "endTime": "08:08",
           "duration": 4,
@@ -194,13 +269,13 @@ Response:
         },
         {
           "mode": "BUS",
-          "from": "Dworzec Główny",
+          "from": "Dworzec Główny Wschód",
           "to": "Plac Centralny",
           "startTime": "08:11",
           "endTime": "08:38",
           "duration": 27,
           "line": "174",
-          "stops": ["Teatr Słowackiego", "Rynek Główny", "..."],
+          "stops": ["Teatr Słowackiego", "Rynek Główny", "Stradom"],
           "isTransit": true
         }
       ]
@@ -211,41 +286,63 @@ Response:
 
 ---
 
-## Tip: crop OSM to city bounding box
+## Troubleshooting
 
-If the regional `.pbf` is too large (OOM errors during build), crop it first:
+### `OutOfMemoryError` during graph build
 
+Docker doesn't have enough RAM.
+
+→ Docker Desktop → Settings → Resources → Memory → set to **6 GB** → Apply & Restart → retry Step 3.
+
+### `graph.obj` not found when starting OTP
+
+You skipped Step 3 or the build failed silently.
+
+→ Check that `otp/graph.obj` exists. If not, re-run the build command from Step 3.
+
+### Backend can't connect to OTP
+
+OTP is still loading. It takes 30–60 seconds after `docker-compose up`.
+
+→ Watch the logs for `Grizzly server running`, then refresh.
+
+### No routes found
+
+- Make sure your coordinates are within the area covered by your GTFS + OSM data
+- Check that the date/time matches your GTFS feed's validity period (feeds usually expire after 3–12 months)
+
+### Windows path errors during build (Git Bash)
+
+Git Bash converts Unix paths like `/var/opentripplanner` to Windows paths.
+
+→ Use the full Windows path with `C:/` instead of `$(pwd)`:
 ```bash
-# Kraków bounding box: west, south, east, north
-docker run --rm \
-  -v "$(pwd)/otp:/data" \
-  iboates/osmium \
-  extract --bbox 19.79,49.97,20.12,50.13 \
-  /data/malopolskie-latest.osm.pbf \
-  -o /data/krakow.osm.pbf \
-  --overwrite
+-v "C:/Users/YOU/gtfs-web-app/otp:/var/opentripplanner"
 ```
-
-Then build with `krakow.osm.pbf` instead. Reduces size from ~185 MB to ~33 MB and cuts build RAM usage significantly.
 
 ---
 
 ## Docker memory
 
-If you hit `OutOfMemoryError` during graph build, increase Docker Desktop's memory:
+To check or change Docker Desktop's memory allocation:
 
-- Docker Desktop → Settings → Resources → Memory → set to **6 GB or more**
+1. Open Docker Desktop
+2. Click the ⚙️ Settings icon
+3. Go to **Resources** → **Memory**
+4. Set to **6 GB** (or more)
+5. Click **Apply & Restart**
 
 ---
 
 ## Tech stack
 
-| Layer | Tech |
-|-------|------|
+| Layer | Technology |
+|-------|-----------|
 | Routing engine | [OpenTripPlanner 2.6](https://www.opentripplanner.org/) |
-| Transit data | GTFS (General Transit Feed Specification) |
-| Street data | OpenStreetMap `.osm.pbf` |
+| Routing algorithm | RAPTOR (multi-criteria transit routing) |
+| Transit data format | GTFS (General Transit Feed Specification) |
+| Street data | OpenStreetMap `.osm.pbf` via Geofabrik |
 | Backend | Node.js + Express |
-| OTP query | GraphQL (`/otp/gtfs/v1`) |
-| Frontend | Plain HTML + Leaflet.js |
+| OTP query interface | GraphQL at `/otp/gtfs/v1` |
+| Frontend | Plain HTML + [Leaflet.js](https://leafletjs.com/) |
 | Infrastructure | Docker Compose |
