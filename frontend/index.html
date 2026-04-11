@@ -278,8 +278,9 @@
       <div class="field">
         <label>📅 Date &amp; Time <span style="font-weight:400;color:#aab4c4">(GTFS valid: Mon–Wed or Sun, up to 2026-03-22)</span></label>
         <div class="coords-row">
-          <input type="date"  id="depDate" value="2026-03-18" style="flex:1.5" />
+          <input type="date"  id="depDate" style="flex:1.5" />
           <input type="time"  id="depTime" value="08:00" />
+          <div id="feedBadge" style="display:none;font-size:11px;color:#888;margin-top:4px;grid-column:1/-1"></div>
         </div>
       </div>
 
@@ -553,6 +554,42 @@ async function getRoute() {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') getRoute();
 });
+
+// ── On load: fetch feed date range and set sensible default date ─────────────
+(async () => {
+  try {
+    const res   = await fetch(`${BACKEND}/feed-info`);
+    const range = await res.json();
+    const today = new Date().toISOString().slice(0, 10);
+
+    let defaultDate = today;
+    let badge = '';
+
+    if (range.start && range.end) {
+      if (today > range.end) {
+        defaultDate = range.end;
+        badge = `⚠️ GTFS feed expired on ${range.end}. Showing last valid day. Download a fresh GTFS to fix this.`;
+      } else if (today < range.start) {
+        defaultDate = range.start;
+        badge = `ℹ️ Feed starts ${range.start}. Using first available day.`;
+      } else {
+        badge = `✅ Feed valid ${range.start} → ${range.end}`;
+      }
+    }
+
+    document.getElementById('depDate').value = defaultDate;
+
+    const badgeEl = document.getElementById('feedBadge');
+    if (badge) {
+      badgeEl.textContent = badge;
+      badgeEl.style.display = 'block';
+      badgeEl.style.color = today > range.end ? '#c62828' : '#555';
+    }
+  } catch (_) {
+    // Backend not ready yet — default to today
+    document.getElementById('depDate').value = new Date().toISOString().slice(0, 10);
+  }
+})();
 </script>
 </body>
 </html>

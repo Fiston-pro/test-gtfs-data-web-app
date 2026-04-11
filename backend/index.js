@@ -54,7 +54,34 @@ function formatTime(isoString) {
   });
 }
 
+// Cache the feed's valid date range so we don't query OTP on every request
+let feedDateRange = null;
+
+async function getFeedDateRange() {
+  if (feedDateRange) return feedDateRange;
+  try {
+    const res = await axios.post(
+      OTP_GRAPHQL,
+      { query: '{ serviceTimeRange { start end } }' },
+      { headers: { 'Content-Type': 'application/json' }, timeout: 10000 }
+    );
+    const range = res.data?.data?.serviceTimeRange;
+    if (range?.start && range?.end) {
+      feedDateRange = {
+        start: new Date(range.start * 1000).toISOString().slice(0, 10),
+        end:   new Date(range.end   * 1000).toISOString().slice(0, 10),
+      };
+    }
+  } catch (_) {}
+  return feedDateRange;
+}
+
 app.get('/health', (_req, res) => res.json({ ok: true }));
+
+app.get('/feed-info', async (_req, res) => {
+  const range = await getFeedDateRange();
+  res.json(range || { start: null, end: null });
+});
 
 app.get('/route', async (req, res) => {
   const { fromLat, fromLon, toLat, toLon } = req.query;
@@ -63,9 +90,25 @@ app.get('/route', async (req, res) => {
     return res.status(400).json({ error: 'Missing coordinates: fromLat, fromLon, toLat, toLon required' });
   }
 
-  // Accept optional date/time overrides — useful when GTFS has a limited service period
   const now = new Date();
-  const date = req.query.date || now.toISOString().slice(0, 10);   // "YYYY-MM-DD"
+  const todayStr = now.toISOString().slice(0, 10);
+
+  // If caller passed a date, use it. Otherwise auto-clamp to feed validity.
+  let date = req.query.date;
+  if (!date) {
+    const range = await getFeedDateRange();
+    if (range) {
+      if (todayStr > range.end) {
+        date = range.end;   // feed expired — use last valid day
+      } else if (todayStr < range.start) {
+        date = range.start; // feed not yet active — use first valid day
+      } else {
+        date = todayStr;
+      }
+    } else {
+      date = todayStr;
+    }
+  }
   const time = req.query.time || now.toTimeString().slice(0, 8);   // "HH:MM:SS"
 
   try {
